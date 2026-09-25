@@ -61,7 +61,7 @@ const TTL = 3 * LOCK_TTL;
 /** 30 days in ms: past a 32-bit integer (2,147,483,647). */
 const THIRTY_DAYS = 30 * 24 * 60 * 60 * 1000;
 
-const response: IdempotencyStoredResponse = { status: 201, headers: {}, body: { receiptId: 'pf_ch_0001' } };
+const response: IdempotencyStoredResponse = { status: 201, headers: {}, body: { receiptId: 'ch_0001' } };
 
 /**
  * The `IdempotencyStore` contract as runner-agnostic cases. `createStore` is
@@ -215,7 +215,7 @@ export function idempotencyStoreContract(
       'acquire() of the new owner\'s lock',
     );
 
-    const retried = { ...response, body: { receiptId: 'pf_ch_0002' } };
+    const retried = { ...response, body: { receiptId: 'ch_0002' } };
     assert.equal(await store.complete(k, 'retry', retried, TTL), true, 'complete() by the new owner');
     expectResult(
       await store.acquire(k, 'other', 'fp-b', LOCK_TTL),
