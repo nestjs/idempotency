@@ -42,7 +42,9 @@ jobs:
       - name: Install dependencies
         run: npm install
       - name: Install NestJS ${{ matrix.nestjs-version }}
-        run: npm install --no-save @nestjs/common@${{ matrix.nestjs-version }} @nestjs/core@${{ matrix.nestjs-version }} @nestjs/testing@${{ matrix.nestjs-version }} @nestjs/platform-express@${{ matrix.nestjs-version }} @nestjs/platform-fastify@${{ matrix.nestjs-version }} @nestjs/microservices@${{ matrix.nestjs-version }} @nestjs/graphql@${{ matrix.nestjs-graphql-version }} @nestjs/apollo@${{ matrix.nestjs-graphql-version }}
+        # The strict install above already checked the tree. @nestjs/graphql 14.0.2 declares an
+        # optional typescript peer of ^5.5 || ^6 (its CLI plugin), which rejects this repo's TypeScript 7.
+        run: npm install --no-save --legacy-peer-deps @nestjs/common@${{ matrix.nestjs-version }} @nestjs/core@${{ matrix.nestjs-version }} @nestjs/testing@${{ matrix.nestjs-version }} @nestjs/platform-express@${{ matrix.nestjs-version }} @nestjs/platform-fastify@${{ matrix.nestjs-version }} @nestjs/microservices@${{ matrix.nestjs-version }} @nestjs/graphql@${{ matrix.nestjs-graphql-version }} @nestjs/apollo@${{ matrix.nestjs-graphql-version }}
       - name: Typecheck
         run: npx tsc -p tsconfig.json --noEmit
       - name: e2e tests
