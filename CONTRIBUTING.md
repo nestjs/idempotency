@@ -84,6 +84,9 @@ Before you submit your Pull Request (PR) consider the following guidelines:
      ```
 
 1. Create your patch, **including appropriate test cases**.
+1. Until @nestjs/resilience is installed from npm here, build and pack it first: `npm run build &&
+  npm pack` in a nestjs/resilience checkout next to this one; the tests install it from
+  `../resilience/nestjs-resilience-0.0.1.tgz`.
 1. Follow our [Coding Rules](#rules).
 1. Run the full Nest test suite, as described in the [developer documentation][dev-doc],
   and ensure that all tests pass.

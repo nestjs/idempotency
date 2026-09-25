@@ -13,6 +13,12 @@ jobs:
         with:
           node-version: 24
           cache: npm
+      - name: Build and pack the sibling packages
+        # The resilience composition spec installs @nestjs/resilience from
+        # ../resilience/nestjs-resilience-0.0.1.tgz.
+        run: |
+          git clone --depth 1 https://github.com/nestjs/resilience.git ../resilience
+          (cd ../resilience && npm install && npm run build && npm pack)
       - run: npm install
       - run: npm run build
       - run: npm run lint
@@ -33,12 +39,34 @@ jobs:
             nestjs-graphql-version: '13'
           - nestjs-version: '12'
             nestjs-graphql-version: '14'
+    services:
+      postgres:
+        image: postgres:18.6
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      SQL_TEST_PG_URL: postgres://postgres:postgres@127.0.0.1:55432/postgres
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
           node-version: ${{ matrix.node-version }}
           cache: npm
+      - name: Build and pack the sibling packages
+        # The resilience composition spec installs @nestjs/resilience from
+        # ../resilience/nestjs-resilience-0.0.1.tgz.
+        run: |
+          git clone --depth 1 https://github.com/nestjs/resilience.git ../resilience
+          (cd ../resilience && npm install && npm run build && npm pack)
       - name: Install dependencies
         run: npm install
       - name: Install NestJS ${{ matrix.nestjs-version }}
