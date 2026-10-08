@@ -91,7 +91,10 @@ type Plan =
 interface Renewal {
   /** A renewal found the lock gone, and said so (once per attempt: `complete()`/`release()` don't repeat it). */
   readonly lost: boolean;
-  /** The outcome is being stored: a renewal refused from now on only means it was. */
+  /**
+   * The outcome is being stored: `maxLockHold` no longer applies, and a renewal
+   * refused from now on only means it was.
+   */
   recording(): void;
   stop(): void;
 }
@@ -562,8 +565,9 @@ export class IdempotencyInterceptor
     ttl: number,
     renewal: Renewal,
   ): Promise<void> {
-    // Renewals go on until the store answers: a slow write mustn't let the
-    // lock lapse, or a retry could run the handler a second time.
+    // Renewals go on until the store answers (or `storeTimeout` passes): a
+    // slow write mustn't let the lock lapse, or a retry could run the handler
+    // a second time.
     renewal.recording();
 
     try {
