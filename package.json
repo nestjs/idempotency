@@ -1,6 +1,6 @@
 {
   "name": "@nestjs/idempotency",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Nest - modern, fast, powerful node.js web framework (@idempotency)",
   "author": "Kamil Mysliwiec",
   "license": "MIT",
