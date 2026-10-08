@@ -1,5 +1,6 @@
 import type { ConfigurableModuleAsyncOptions, Type } from '@nestjs/common';
 import type { IdempotentOptions } from './idempotent-options.interface.js';
+import type { Duration } from '../utils/duration.util.js';
 
 export interface IdempotencyEncryptionOptions {
   /**
@@ -39,6 +40,15 @@ export interface IdempotencyModuleOptions extends IdempotentOptions {
    * which interface to implement and how to register it.
    */
   allowInMemoryStorage?: boolean;
+  /**
+   * How long the module waits for each store call (`acquire()`,
+   * `complete()`, `release()`, `extend()`), so a store that stops answering
+   * can't hang requests. A timed-out `acquire()` fails the request with
+   * `IdempotencyStoreTimeoutError`; a timed-out `complete()` or `release()`
+   * is reported as a lost lock, and the result still goes to the caller.
+   * Default `'10s'`.
+   */
+  storeTimeout?: Duration;
 }
 
 /**

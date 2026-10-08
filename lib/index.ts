@@ -25,6 +25,8 @@ export type {
 } from './interfaces/index.js';
 export { IdempotencyStorage } from './storage/index.js';
 export { InMemoryIdempotencyStore } from './stores/index.js';
+// What a request fails with when `acquire()` outlasts `storeTimeout`.
+export { IdempotencyStoreTimeoutError } from './errors/index.js';
 
 // Rejections: the `code` in HTTP bodies, GraphQL extensions and RPC errors
 export type { IdempotencyErrorCode } from './interfaces/index.js';

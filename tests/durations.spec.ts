@@ -62,6 +62,19 @@ describe('withDurationsInMs()', () => {
     );
     expect(() => withDurationsInMs({ retryAfter: -1 }, 'X')).toThrow('X: invalid `retryAfter`.');
   });
+
+  it('converts maxLockHold and the module-wide storeTimeout, neither of which can be zero', () => {
+    expect(withDurationsInMs({ maxLockHold: '2h', storeTimeout: '5s' } as never, 'X')).toEqual({
+      maxLockHold: 7_200_000,
+      storeTimeout: 5_000,
+    });
+    expect(() => withDurationsInMs({ maxLockHold: 0 }, '@Idempotent()')).toThrow(
+      '@Idempotent(): `maxLockHold` must be at least 1 ms, got 0.',
+    );
+    expect(() => withDurationsInMs({ storeTimeout: '0ms' } as never, 'IdempotencyModule')).toThrow(
+      'IdempotencyModule: `storeTimeout` must be at least 1 ms, got "0ms".',
+    );
+  });
 });
 
 describe('@Idempotent()', () => {
@@ -94,5 +107,11 @@ describe('@Idempotent()', () => {
         imports: [IdempotencyModule.forRootAsync({ useFactory: () => ({ retryAfter: '1 minute' as never }) })],
       }).compile(),
     ).rejects.toThrow('IdempotencyModule: invalid `retryAfter`. Invalid duration "1 minute".');
+  });
+
+  it('fails module startup on an invalid storeTimeout', async () => {
+    await expect(
+      Test.createTestingModule({ imports: [IdempotencyModule.forRoot({ storeTimeout: '10 s' as never })] }).compile(),
+    ).rejects.toThrow('IdempotencyModule: invalid `storeTimeout`. Invalid duration "10 s".');
   });
 });

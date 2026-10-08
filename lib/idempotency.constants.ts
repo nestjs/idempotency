@@ -1,5 +1,7 @@
 export const DEFAULT_TTL = 24 * 60 * 60 * 1000;
 export const DEFAULT_LOCK_TTL = 60 * 1000;
+export const DEFAULT_MAX_LOCK_HOLD = 60 * 60 * 1000;
+export const DEFAULT_STORE_TIMEOUT = 10 * 1000;
 export const DEFAULT_RETRY_AFTER = 1000;
 export const DEFAULT_HEADER = 'Idempotency-Key';
 /** The default payload property (rpc) and argument (graphql) holding the key. */

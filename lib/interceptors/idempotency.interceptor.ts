@@ -24,6 +24,7 @@ import { HttpContextAdapter } from '../contexts/http.context.js';
 import { RpcContextAdapter } from '../contexts/rpc.context.js';
 import { ResponseCipher, plaintextCodec, type ResponseCodec } from '../utils/encryption.util.js';
 import { UnreadableRecordError } from '../errors/unreadable-record.error.js';
+import { IdempotencyStoreTimeoutError } from '../errors/store-timeout.error.js';
 import { IdempotencyEvents } from '../events/idempotency-events.service.js';
 import type { IdempotencyEvent } from '../events/idempotency-events.interface.js';
 import { canonicalJson, sha256 } from '../utils/fingerprint.util.js';
@@ -45,8 +46,10 @@ import type {
 import {
   DEFAULT_HEADER,
   DEFAULT_LOCK_TTL,
+  DEFAULT_MAX_LOCK_HOLD,
   DEFAULT_REPLAY_HEADERS,
   DEFAULT_RETRY_AFTER,
+  DEFAULT_STORE_TIMEOUT,
   DEFAULT_TTL,
   MAX_KEY_LENGTH,
   NEVER_REPLAYED_HEADERS,
@@ -60,6 +63,7 @@ interface Resolved {
   required: boolean;
   ttl: number;
   lockTtl: number;
+  maxLockHold: number;
   retryAfter: number;
   storeIf: (status: number, error?: unknown) => boolean;
   scope: IdempotentOptions['scope'];
@@ -94,7 +98,7 @@ interface Renewal {
 
 const INVALID_KEY = Symbol('invalid key');
 const PRINTABLE_ASCII = /^[\x20-\x7e]+$/;
-/** The longest delay `setInterval()` takes; a longer one fires every 1 ms. */
+/** The longest delay `setInterval()` and `setTimeout()` take; a longer one fires after 1 ms. */
 const MAX_TIMEOUT = 2 ** 31 - 1;
 
 @Injectable()
@@ -106,6 +110,8 @@ export class IdempotencyInterceptor
   private readonly header: string;
   private readonly adapters: Record<IdempotencyContextType, IdempotencyContextAdapter>;
   private readonly codec: ResponseCodec;
+  /** How long each store call may take, in ms. */
+  private readonly storeTimeout: number;
   /** Handlers already warned about, per topic: each warning is logged once. */
   private readonly warned = new Map<string, WeakSet<Function>>();
   /** Locks being renewed, stopped at shutdown. */
@@ -123,6 +129,10 @@ export class IdempotencyInterceptor
     assertOptions(options);
     this.defaults = withDurationsInMs(options, 'IdempotencyModule');
     this.header = (options.header ?? DEFAULT_HEADER).toLowerCase();
+    this.storeTimeout = Math.min(
+      (this.defaults.storeTimeout as number | undefined) ?? DEFAULT_STORE_TIMEOUT,
+      MAX_TIMEOUT,
+    );
 
     const replayHeaders = [
       ...new Set(
@@ -149,9 +159,33 @@ export class IdempotencyInterceptor
     return this.storage.source;
   }
 
-  /** `release()` as a promise that rejects, even when the app's store throws synchronously. */
-  private async releaseQuietly(key: string, owner: string): Promise<unknown> {
-    return this.store.release(key, owner);
+  /**
+   * One store call, as a promise that rejects when the store throws
+   * (synchronously too), and with `IdempotencyStoreTimeoutError` when it
+   * doesn't answer within `storeTimeout`: a store that hangs mustn't hang
+   * the request, or keep its lock renewed, with it.
+   */
+  private async ask<T>(
+    method: keyof IdempotencyStore,
+    call: (store: IdempotencyStore) => Promise<T>,
+  ): Promise<T> {
+    let timer: NodeJS.Timeout | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(
+        () => reject(new IdempotencyStoreTimeoutError(method, this.storeTimeout)),
+        this.storeTimeout,
+      );
+      timer.unref();
+    });
+    try {
+      return await Promise.race([call(this.store), timeout]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  private releaseQuietly(key: string, owner: string): Promise<unknown> {
+    return this.ask('release', (store) => store.release(key, owner));
   }
 
   intercept(context: ExecutionContext, next: CallHandler): Observable<unknown> {
@@ -350,7 +384,9 @@ export class IdempotencyInterceptor
     const owner = randomUUID();
     let acquired: IdempotencyAcquireResult;
     try {
-      acquired = await this.store.acquire(call.storeKey, owner, fingerprint, opts.lockTtl);
+      acquired = await this.ask('acquire', (store) =>
+        store.acquire(call.storeKey, owner, fingerprint, opts.lockTtl),
+      );
     } catch (err) {
       // The store may have taken the lock before its reply was lost. Releasing
       // it (it's owner-checked) spares the retry a wait of `lockTtl`.
@@ -426,7 +462,7 @@ export class IdempotencyInterceptor
     const { adapter, context } = call;
 
     return new Observable<unknown>((subscriber) => {
-      const renewal = this.renew(call, owner, opts.lockTtl);
+      const renewal = this.renew(call, owner, opts);
       let recorded: Promise<void> | undefined;
       /** Stores the outcome, or releases the key when there is none, exactly once. */
       const record = (outcome?: IdempotencyStoredResponse) =>
@@ -533,12 +569,14 @@ export class IdempotencyInterceptor
     try {
       if (outcome) {
         const sealed = this.codec.seal(call.storeKey, outcome);
-        const ok = await this.store.complete(call.storeKey, owner, sealed, ttl);
+        const ok = await this.ask('complete', (store) =>
+          store.complete(call.storeKey, owner, sealed, ttl),
+        );
         if (!ok && !renewal.lost) {
           this.lockLost(call, 'complete', 'the result was not stored');
         }
       } else {
-        const ok = await this.store.release(call.storeKey, owner);
+        const ok = await this.releaseQuietly(call.storeKey, owner);
         if (!ok && !renewal.lost) {
           this.lockLost(call, 'release', 'the key was not released');
         }
@@ -560,10 +598,13 @@ export class IdempotencyInterceptor
   /**
    * Renews the lock every `lockTtl / 3`, one renewal at a time, until
    * stopped: a handler slower than `lockTtl` keeps its lock, and a retry gets
-   * a 409 instead of running the handler a second time. The timer is
-   * `unref()`'d, so it never keeps the process alive.
+   * a 409 instead of running the handler a second time. A handler that runs
+   * longer than `maxLockHold` (one that hangs) is renewed no more, so the key
+   * isn't blocked, and the call not kept, until the app shuts down. Storing
+   * the outcome is bounded by `storeTimeout` instead. The timers are
+   * `unref()`'d, so they never keep the process alive.
    */
-  private renew(call: Call, owner: string, lockTtl: number): Renewal {
+  private renew(call: Call, owner: string, { lockTtl, maxLockHold }: Resolved): Renewal {
     let stopped = false;
     let recording = false;
     let pending = false;
@@ -577,7 +618,7 @@ export class IdempotencyInterceptor
 
       pending = true;
       try {
-        const ok = await this.store.extend(call.storeKey, owner, lockTtl);
+        const ok = await this.ask('extend', (store) => store.extend(call.storeKey, owner, lockTtl));
         if (!ok) {
           if (!stopped && !recording) {
             lost = true;
@@ -604,16 +645,28 @@ export class IdempotencyInterceptor
     const timer = setInterval(() => void beat(), every);
     timer.unref();
 
+    const ceiling = setTimeout(() => {
+      this.logger.warn(
+        `${call.handler} has held the lock for "${call.storeKey}" for maxLockHold ` +
+          `(${maxLockHold} ms) without finishing, so the lock is no longer renewed: it expires ` +
+          `after lockTtl, and a retry may then run the handler again.`,
+      );
+      renewal.stop();
+    }, Math.min(maxLockHold, MAX_TIMEOUT));
+    ceiling.unref();
+
     const renewal: Renewal = {
       get lost() {
         return lost;
       },
       recording: () => {
         recording = true;
+        clearTimeout(ceiling);
       },
       stop: () => {
         stopped = true;
         clearInterval(timer);
+        clearTimeout(ceiling);
         this.renewals.delete(renewal);
       },
     };
@@ -719,9 +772,10 @@ export class IdempotencyInterceptor
       ...definedOnly(this.defaults),
       ...definedOnly(classOptions),
       ...definedOnly(handlerOptions),
-    } as Omit<IdempotentOptions, 'ttl' | 'lockTtl' | 'retryAfter'> & {
+    } as Omit<IdempotentOptions, 'ttl' | 'lockTtl' | 'maxLockHold' | 'retryAfter'> & {
       ttl?: number;
       lockTtl?: number;
+      maxLockHold?: number;
       retryAfter?: number;
     };
 
@@ -729,6 +783,7 @@ export class IdempotencyInterceptor
       required: merged.required ?? false,
       ttl: merged.ttl ?? DEFAULT_TTL,
       lockTtl: merged.lockTtl ?? DEFAULT_LOCK_TTL,
+      maxLockHold: merged.maxLockHold ?? DEFAULT_MAX_LOCK_HOLD,
       retryAfter: merged.retryAfter ?? DEFAULT_RETRY_AFTER,
       storeIf: merged.storeIf ?? ((status) => status < 500),
       scope: merged.scope,

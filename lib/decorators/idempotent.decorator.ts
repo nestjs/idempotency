@@ -16,16 +16,22 @@ import { IDEMPOTENT_METADATA } from '../idempotency.constants.js';
 export const Idempotent = (options: IdempotentOptions = {}) =>
   SetMetadata(IDEMPOTENT_METADATA, withDurationsInMs(options, '@Idempotent()'));
 
+/** Every duration option: the handler's, and the module's `storeTimeout`. */
+type Durations = Pick<IdempotentOptions, 'ttl' | 'lockTtl' | 'maxLockHold' | 'retryAfter'> & {
+  storeTimeout?: Duration;
+};
+
 /**
- * Validates and converts `ttl`, `lockTtl` and `retryAfter` to milliseconds
- * where they are declared, so a typo fails at startup with the option's name.
- * Rounded up to whole milliseconds: stores pass them on as is, and Redis
- * `PEXPIRE` rejects a fraction halfway through a script, after its writes.
+ * Validates and converts `ttl`, `lockTtl`, `maxLockHold`, `retryAfter` and
+ * `storeTimeout` to milliseconds where they are declared, so a typo fails at
+ * startup with the option's name. Rounded up to whole milliseconds: stores
+ * pass them on as is, and Redis `PEXPIRE` rejects a fraction halfway through
+ * a script, after its writes.
  */
 export function withDurationsInMs<T extends IdempotentOptions>(options: T, where: string): T {
-  const result = { ...options };
-  const convert = (name: 'ttl' | 'lockTtl' | 'retryAfter', min: number) => {
-    const value: Duration | undefined = options[name];
+  const result: Durations = { ...options };
+  const convert = (name: keyof Durations, min: number) => {
+    const value: Duration | undefined = (options as Durations)[name];
     if (value === undefined) {
       return;
     }
@@ -45,7 +51,9 @@ export function withDurationsInMs<T extends IdempotentOptions>(options: T, where
 
   convert('ttl', 1);
   convert('lockTtl', 1);
+  convert('maxLockHold', 1);
   convert('retryAfter', 0);
+  convert('storeTimeout', 1);
 
-  return result;
+  return result as T;
 }
