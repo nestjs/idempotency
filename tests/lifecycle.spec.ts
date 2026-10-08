@@ -6,6 +6,7 @@ import {
   Idempotent,
   IdempotencyEvents,
   IdempotencyModule,
+  IdempotencyStoreTimeoutError,
   InMemoryIdempotencyStore,
   type IdempotencyEvent,
   type IdempotencyModuleOptions,
@@ -120,6 +121,116 @@ describe('the lock while a call runs', () => {
     const renewals = extend.mock.calls.length;
     await sleep(60);
     expect(extend.mock.calls.length).toBe(renewals);
+  });
+
+  it('stops renewing a handler that outlives maxLockHold, so its lock expires instead of blocking the key', async () => {
+    await boot({ lockTtl: 30, maxLockHold: 60 });
+    const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+    const extend = vi.spyOn(store, 'extend');
+    void run('k1', { handle: () => NEVER }).catch(() => {});
+
+    await until(() => warn.mock.calls.length > 0);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('maxLockHold (60 ms) without finishing'));
+    const renewals = extend.mock.calls.length;
+    expect(renewals).toBeGreaterThan(0);
+    await sleep(60);
+    expect(extend.mock.calls.length).toBe(renewals);
+    expect(await run('k1', { handle: () => of('retried') })).toBe('retried');
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports a lost lock when a handler finishes after maxLockHold and a retry took the key', async () => {
+    await boot({ lockTtl: 30, maxLockHold: 30 });
+    const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+    const events: IdempotencyEvent[] = [];
+    moduleRef.get(IdempotencyEvents).events$.subscribe((event) => events.push(event));
+
+    let finish!: (value: string) => void;
+    const late = run('k1', {
+      handle: () => new Observable((s) => void new Promise<string>((r) => (finish = r)).then((v) => (s.next(v), s.complete()))),
+    });
+    await until(() => warn.mock.calls.length > 0);
+    await sleep(50); // past lockTtl: the lock expired
+    expect(await run('k1', { handle: () => of('retried') })).toBe('retried');
+
+    finish('late');
+    expect(await late).toBe('late');
+    expect(events).toEqual([
+      { type: 'lock-lost', phase: 'complete', context: 'rpc', handler: 'Consumers.charge', key: 'k1' },
+    ]);
+    expect(await run('k1', { handle: () => of('again') })).toBe('retried');
+  });
+
+  it('keeps renewing past maxLockHold while the result is being stored', async () => {
+    await boot({ lockTtl: 30, maxLockHold: 60 });
+    const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+    const complete = store.complete.bind(store);
+    vi.spyOn(store, 'complete').mockImplementation(async (...args) => {
+      await sleep(150); // a slow write, well past maxLockHold
+      return complete(...args);
+    });
+    let runs = 0;
+    const next = { handle: () => (runs++, of({ charged: runs })) };
+
+    const first = run('k1', next);
+    await sleep(100);
+    const duplicate: any = await run('k1', next).catch((err) => err);
+    expect(duplicate.getError()).toMatchObject({ code: 'IDEMPOTENCY_KEY_IN_USE' });
+    expect(await first).toEqual({ charged: 1 });
+    expect(store.peek(storeKey('k1'))?.state).toBe('completed');
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('answers when the store never stores the result, reports a lost lock, and stops renewing', async () => {
+    await boot({ lockTtl: 30, storeTimeout: 50 });
+    const error = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
+    const events: IdempotencyEvent[] = [];
+    moduleRef.get(IdempotencyEvents).events$.subscribe((event) => events.push(event));
+    vi.spyOn(store, 'complete').mockReturnValue(new Promise(() => {}));
+    const extend = vi.spyOn(store, 'extend');
+
+    expect(await run('k1', { handle: () => of('charged') })).toBe('charged');
+    expect(events).toEqual([
+      { type: 'lock-lost', phase: 'complete', context: 'rpc', handler: 'Consumers.charge', key: 'k1' },
+    ]);
+    expect(error).toHaveBeenCalledWith(
+      'Idempotency store failed for "k1:Consumers.charge"',
+      new IdempotencyStoreTimeoutError('complete', 50),
+    );
+
+    const renewals = extend.mock.calls.length;
+    await sleep(60);
+    expect(extend.mock.calls.length).toBe(renewals);
+  });
+
+  it('fails the call when the store never answers acquire(), and releases what it may have taken', async () => {
+    await boot({ storeTimeout: 50 });
+    vi.spyOn(store, 'acquire').mockReturnValueOnce(new Promise(() => {}));
+    const release = vi.spyOn(store, 'release');
+    let runs = 0;
+
+    const err: any = await run('k1', { handle: () => (runs++, of('ok')) }).catch((e) => e);
+    expect(err).toBeInstanceOf(IdempotencyStoreTimeoutError);
+    expect(err.message).toBe('IdempotencyStore.acquire() did not answer within 50 ms (storeTimeout)');
+    expect(runs).toBe(0);
+    expect(release).toHaveBeenCalledWith(storeKey('k1'), expect.any(String));
+  });
+
+  it('keeps renewing after a renewal the store never answers', async () => {
+    await boot({ lockTtl: 300, storeTimeout: 50 }); // a renewal every 100 ms, well before the lock expires
+    const error = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
+    const extend = vi.spyOn(store, 'extend').mockImplementationOnce(() => new Promise(() => {}));
+    const next = {
+      handle: () => new Observable((s) => void sleep(450).then(() => (s.next('ok'), s.complete()))),
+    };
+
+    expect(await run('k1', next)).toBe('ok');
+    expect(extend.mock.calls.length).toBeGreaterThan(2);
+    expect(error).toHaveBeenCalledWith(
+      'Could not renew the lock for "k1:Consumers.charge"',
+      new IdempotencyStoreTimeoutError('extend', 50),
+    );
+    expect(store.peek(storeKey('k1'))?.state).toBe('completed');
   });
 
   it('releases the key and stops renewing when calling the handler throws synchronously', async () => {

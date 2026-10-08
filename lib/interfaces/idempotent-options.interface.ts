@@ -82,6 +82,15 @@ export interface IdempotentOptions {
    */
   lockTtl?: Duration;
   /**
+   * How long a running handler keeps its lock renewed. A handler still
+   * running after that (one that hangs) stops being renewed, so its lock
+   * expires after `lockTtl` and stops blocking the key, at the cost that a
+   * retry may then run the handler a second time. If the handler does
+   * finish, its result is stored only if no retry took the key over. Default
+   * `'1h'`.
+   */
+  maxLockHold?: Duration;
+  /**
    * How long a client should wait after `IDEMPOTENCY_KEY_IN_USE` before it
    * asks again. Sent in whole seconds, rounded up: the `Retry-After` header
    * (HTTP), `retryAfter` in the error (GraphQL, RPC). Default `'1s'`.
