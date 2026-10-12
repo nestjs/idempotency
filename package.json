@@ -43,7 +43,7 @@
     "@as-integrations/express5": "1.1.2",
     "@commitlint/cli": "21.2.3",
     "@commitlint/config-angular": "21.2.3",
-    "@electric-sql/pglite": "0.5.8",
+    "@electric-sql/pglite": "0.5.9",
     "@nestjs/apollo": "14.0.1",
     "@nestjs/common": "12.1.2",
     "@nestjs/core": "12.1.2",
