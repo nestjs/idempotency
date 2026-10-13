@@ -70,6 +70,19 @@ class TruncatingStore extends InMemoryIdempotencyStore {
   }
 }
 
+/** Keeps durations in a 32-bit integer: a ttl past 2,147,483,647 ms wraps around to the past. */
+class Int32TtlStore extends InMemoryIdempotencyStore {
+  override acquire(key: string, owner: string, fingerprint: string, lockTtl: number) {
+    return super.acquire(key, owner, fingerprint, lockTtl | 0);
+  }
+  override complete(key: string, owner: string, response: IdempotencyStoredPayload, ttl: number) {
+    return super.complete(key, owner, response, ttl | 0);
+  }
+  override extend(key: string, owner: string, lockTtl: number) {
+    return super.extend(key, owner, lockTtl | 0);
+  }
+}
+
 async function failures(cases: IdempotencyStoreContractCase[]) {
   const failed: string[] = [];
   for (const c of cases) {
@@ -144,6 +157,11 @@ describe('idempotencyStoreContract()', () => {
     const failed = await failures(idempotencyStoreContract(() => new TruncatingStore(), { advanceTime }));
     expect(failed).toEqual([expect.stringMatching(/^keeps keys apart exactly, however similar or long: acquire\(\) of key #16/)]);
   });
+
+  it('fails a store that keeps durations in a 32-bit integer', async () => {
+    const failed = await failures(idempotencyStoreContract(() => new Int32TtlStore(), { advanceTime, concurrent: true }));
+    expect(failed).toEqual([expect.stringMatching(/^takes durations of weeks, past a 32-bit integer: extend\(\) with a 30-day lockTtl/)]);
+  });
 });
 
 /** Answers with the caller's fingerprint instead of the stored one: every key reuse would look like a retry. */
@@ -182,6 +200,25 @@ class ExtendsRecordsStore extends InMemoryIdempotencyStore {
   }
 }
 
+/** Records every lock ttl and ttl it is handed, to prove the option reaches the store. */
+class RecordingStore extends InMemoryIdempotencyStore {
+  readonly lockTtls = new Set<number>();
+  readonly ttls = new Set<number>();
+
+  override async acquire(key: string, owner: string, fingerprint: string, lockTtl: number) {
+    this.lockTtls.add(lockTtl);
+    return super.acquire(key, owner, fingerprint, lockTtl);
+  }
+  override async complete(key: string, owner: string, response: IdempotencyStoredPayload, ttl: number) {
+    this.ttls.add(ttl);
+    return super.complete(key, owner, response, ttl);
+  }
+  override async extend(key: string, owner: string, lockTtl: number) {
+    this.lockTtls.add(lockTtl);
+    return super.extend(key, owner, lockTtl);
+  }
+}
+
 describe('idempotencyStoreContract() against broken stores', () => {
   beforeEach(() => {
     vi.useFakeTimers({ toFake: ['Date'] });
@@ -214,7 +251,7 @@ describe('idempotencyStoreContract() against broken stores', () => {
   });
 
   it('takes an async store factory and an async clock, and awaits both', async () => {
-    const shared = new InMemoryIdempotencyStore();
+    const shared = new RecordingStore();
     let created = 0;
     const cases = idempotencyStoreContract(
       async () => {
@@ -222,12 +259,16 @@ describe('idempotencyStoreContract() against broken stores', () => {
         await Promise.resolve();
         return shared;
       },
-      { advanceTime: async (ms) => advanceTime(ms), concurrent: { callers: 3 } },
+      { advanceTime: async (ms) => advanceTime(ms), concurrent: { callers: 3 }, lockTtl: 120 },
     );
 
     expect(await failures(cases)).toEqual([]);
     expect(created).toBe(cases.length);
     expect(cases.map((c) => c.name)).toContain('concurrency: 3 callers on 2 keys at once: one winner per key');
+
+    // The option reaches the store: the expiry cases take a 120 ms lock and a 360 ms record ttl.
+    expect(shared.lockTtls).toContain(120);
+    expect(shared.ttls).toContain(360);
   });
 
   it('refuses a concurrency setting that is not a whole number of callers', () => {
@@ -235,5 +276,33 @@ describe('idempotencyStoreContract() against broken stores', () => {
     expect(() => idempotencyStoreContract(fresh, { concurrent: { callers: 2.5 } })).toThrow(RangeError);
     expect(idempotencyStoreContract(fresh, { concurrent: false })).toHaveLength(13);
     expect(idempotencyStoreContract(fresh, { concurrent: {} })).toHaveLength(19);
+  });
+
+  it('refuses a lock ttl outside the supported range', () => {
+    const fresh = () => new InMemoryIdempotencyStore();
+    expect(() => idempotencyStoreContract(fresh, { lockTtl: 0 })).toThrow(RangeError);
+    expect(() => idempotencyStoreContract(fresh, { lockTtl: -1 })).toThrow(RangeError);
+    expect(() => idempotencyStoreContract(fresh, { lockTtl: 2.5 })).toThrow(RangeError);
+    expect(() => idempotencyStoreContract(fresh, { lockTtl: 1 })).toThrow(RangeError); // lockTtl / 4 is under 1 ms
+    expect(() => idempotencyStoreContract(fresh, { lockTtl: 3 })).toThrow(RangeError);
+    expect(idempotencyStoreContract(fresh, { lockTtl: 4 })).toHaveLength(13);
+    expect(idempotencyStoreContract(fresh, { lockTtl: 1_000 })).toHaveLength(13);
+  });
+
+  it('bounds lockTtl by the real-time timer delay, unless a custom clock is given', () => {
+    const fresh = () => new InMemoryIdempotencyStore();
+    const atTimerLimit = 660_764_199; // 3 * lockTtl + lockTtl / 4 === 2 ** 31 - 1
+    expect(idempotencyStoreContract(fresh, { lockTtl: atTimerLimit, concurrent: true })).toHaveLength(19);
+    expect(() => idempotencyStoreContract(fresh, { lockTtl: atTimerLimit + 1 })).toThrow(RangeError);
+    // A custom clock need not use Node timers, so only the 30-day record ttl limits it.
+    expect(idempotencyStoreContract(fresh, { lockTtl: atTimerLimit + 1, advanceTime: () => {} })).toHaveLength(13);
+  });
+
+  it('bounds lockTtl by the 30-day record ttl, whatever the clock', () => {
+    const fresh = () => new InMemoryIdempotencyStore();
+    const clock = { advanceTime: () => {} };
+    const atRecordLimit = 797_538_461; // 3 * lockTtl + lockTtl / 4 is just under 30 days
+    expect(idempotencyStoreContract(fresh, { lockTtl: atRecordLimit, ...clock })).toHaveLength(13);
+    expect(() => idempotencyStoreContract(fresh, { lockTtl: atRecordLimit + 1, ...clock })).toThrow(RangeError);
   });
 });
