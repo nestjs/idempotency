@@ -6,8 +6,7 @@
  * quiet.
  */
 import { Body, Controller, Logger, Module, Post, Req, UseInterceptors, type INestApplication } from '@nestjs/common';
-import { FileInterceptor } from '@nestjs/platform-express';
-import express from 'express';
+import { FileInterceptor, type NestExpressApplication } from '@nestjs/platform-express';
 import request from 'supertest';
 import { adapters, createApp } from './support/adapters.js';
 import { IdempotencyModule, Idempotent, InMemoryIdempotencyStore } from '../lib/index.js';
@@ -95,7 +94,7 @@ describe('a body no parser had read (express)', () => {
     app = await createApp('express', AppModule, {
       setup: (a) => {
         a.useLogger(false);
-        a.use('/blobs', express.raw({ type: 'application/octet-stream' }));
+        (a as NestExpressApplication).useBodyParser('raw', { type: 'application/octet-stream' });
         // What `attachFieldsToBody: 'keyValues'` (Fastify) leaves for a form whose only part is a file `onFile` didn't buffer.
         a.use('/key-values', (req: any, _res: unknown, next: () => void) => {
           req.body = {};
