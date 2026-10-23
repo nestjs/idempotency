@@ -107,6 +107,78 @@ describe('encodeResult() and decodeResult()', () => {
     expect(encodeResult({ total: () => 10, id: 1 })).toEqual({ id: 1 });
     expect(encodeResult({ missing: undefined }, { strict: true })).toEqual({});
   });
+
+  describe('getters on a class instance', () => {
+    class Money {
+      constructor(readonly cents: number) {}
+      get formatted() {
+        return `${(this.cents / 100).toFixed(2)} EUR`;
+      }
+      get label() {
+        return 'money';
+      }
+      format() {
+        return this.formatted;
+      }
+    }
+    class Refund extends Money {
+      override get label() {
+        return 'refund';
+      }
+    }
+
+    /** A strict-mode record after a store's JSON round trip. */
+    const throughStrictStore = (value: unknown) =>
+      decodeResult(JSON.parse(JSON.stringify(encodeResult(value, { strict: true }))));
+
+    it('in strict mode (GraphQL), stores their values, as GraphQL reads them, however deeply nested', () => {
+      const value = { total: new Money(1250), lines: [new Money(250)], refund: { of: new Refund(100) } };
+
+      expect(throughStrictStore(value)).toEqual({
+        total: { cents: 1250, formatted: '12.50 EUR', label: 'money' },
+        lines: [{ cents: 250, formatted: '2.50 EUR', label: 'money' }],
+        // The inherited getter is kept, and the subclass's shadows the base class's.
+        refund: { of: { cents: 100, formatted: '1.00 EUR', label: 'refund' } },
+      });
+    });
+
+    it('in strict mode, refuses a getter that throws or returns a promise', () => {
+      class Unloaded {
+        get amount(): string {
+          throw new Error('not loaded');
+        }
+      }
+      class Lazy {
+        get customer() {
+          return Promise.resolve({ id: 1 });
+        }
+      }
+
+      expect(() => encodeResult({ receipt: new Unloaded() }, { strict: true })).toThrow(
+        'its result has a getter that throws ("amount")',
+      );
+      expect(() => encodeResult(new Lazy(), { strict: true })).toThrow(
+        'its result holds a promise or a stream, which GraphQL awaits',
+      );
+    });
+
+    it('otherwise leaves them out, as JSON.stringify does', () => {
+      class Unloaded {
+        id = 1;
+        get amount(): string {
+          throw new Error('not loaded');
+        }
+      }
+      const value = { total: new Money(1250), lines: [new Refund(100)], unloaded: new Unloaded() };
+
+      expect(throughStore(value)).toEqual(JSON.parse(JSON.stringify(value)));
+      expect(throughStore(value)).toEqual({
+        total: { cents: 1250 },
+        lines: [{ cents: 100 }],
+        unloaded: { id: 1 },
+      });
+    });
+  });
 });
 
 describe('unreplayableReason()', () => {

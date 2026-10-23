@@ -14,7 +14,8 @@ import { UnreplayableResult } from '../errors/unreplayable-result.error.js';
  * Dates, BigInts, Buffers and Uint8Arrays, Maps and Sets. Everything else
  * follows `JSON.stringify`: `toJSON()` is applied, a class instance keeps
  * its own enumerable properties (not its prototype's getters and methods),
- * and `undefined`, functions and symbols are left out of objects.
+ * and `undefined`, functions and symbols are left out of objects. In strict
+ * mode, a class instance also keeps the values of its prototype's getters.
  */
 const TYPE = '__idempotencyType';
 
@@ -38,7 +39,10 @@ export function unreplayableReason(value: unknown): string | undefined {
 /**
  * `strict` is for GraphQL, which awaits promises and calls functions it
  * finds in a result: a copy without them would replay something else, so
- * they make the result unreplayable instead of being left out.
+ * they make the result unreplayable instead of being left out. GraphQL also
+ * reads a field through the prototype chain, so the values of a class
+ * instance's getters are stored (each is read once, here), and a getter
+ * that throws makes the result unreplayable.
  */
 export function encodeResult(value: unknown, { strict = false } = {}): unknown {
   const encoded = encode(value, strict, new Set());
@@ -107,8 +111,8 @@ function encode(value: unknown, strict: boolean, ancestors: Set<object>): unknow
     }
 
     const members: Record<string, unknown> = {};
-    for (const key of Object.keys(object)) {
-      const encoded = encode(object[key], strict, ancestors);
+    for (const key of strict ? fieldKeys(object) : Object.keys(object)) {
+      const encoded = encode(strict ? read(object, key) : object[key], strict, ancestors);
       if (encoded !== OMIT) {
         assign(members, key, encoded);
       }
@@ -163,6 +167,38 @@ function assign(target: Record<string, unknown>, key: string, value: unknown) {
     Object.defineProperty(target, key, { value, enumerable: true, writable: true, configurable: true });
   } else {
     target[key] = value;
+  }
+}
+
+/**
+ * The own enumerable keys, then the getters on the prototype chain below
+ * `Object.prototype`, a nearer key shadowing a farther one as in a property
+ * read. A plain object has its own keys only.
+ */
+function fieldKeys(object: object): string[] {
+  const keys = Object.keys(object);
+  const seen = new Set(Object.getOwnPropertyNames(object));
+  for (
+    let proto = Object.getPrototypeOf(object);
+    proto !== null && proto !== Object.prototype;
+    proto = Object.getPrototypeOf(proto)
+  ) {
+    for (const key of Object.getOwnPropertyNames(proto)) {
+      if (!seen.has(key) && key !== '__proto__' && Object.getOwnPropertyDescriptor(proto, key)?.get) {
+        keys.push(key);
+      }
+      seen.add(key);
+    }
+  }
+  return keys;
+}
+
+/** A strict-mode read, where a getter that throws makes the result unreplayable. */
+function read(object: Record<string, unknown>, key: string): unknown {
+  try {
+    return object[key];
+  } catch {
+    throw new UnreplayableResult(`its result has a getter that throws ("${key}")`);
   }
 }
 

@@ -20,6 +20,13 @@ const hit = (name: string) => (state.calls[name] = (state.calls[name] ?? 0) + 1)
 /** More than a megabyte of JSON. */
 const statement = Array.from({ length: 20_000 }, (_, i) => ({ line: i, memo: `payment #${i} to account PL61 1090 1014` }));
 
+class Receipt {
+  constructor(readonly cents: number) {}
+  get amount() {
+    return `${(this.cents / 100).toFixed(2)} EUR`;
+  }
+}
+
 @Controller('transfers')
 class TransfersController {
   @Post()
@@ -46,6 +53,13 @@ class TransfersController {
   statement() {
     hit('statement');
     return statement;
+  }
+
+  @Post('receipt')
+  @Idempotent()
+  receipt() {
+    hit('receipt');
+    return new Receipt(1250);
   }
 
   @Post('void')
@@ -199,6 +213,16 @@ describe.each(adapters.map((a) => a.name))('Idempotency over HTTP (%s)', (adapte
       expect(retry.text.length).toBeGreaterThan(1_000_000);
       expect(retry.text).toBe(first.text);
       expect(state.calls.statement).toBe(1);
+    });
+
+    it('replay a class instance as JSON sent it, without its getters', async () => {
+      const first = await post('/transfers/receipt', 'k1');
+      const retry = await post('/transfers/receipt', 'k1');
+
+      expect(first.body).toEqual({ cents: 1250 });
+      expect(retry.body).toEqual(first.body);
+      expect(retry.headers['idempotent-replayed']).toBe('true');
+      expect(state.calls.receipt).toBe(1);
     });
 
     it('replay a 204 without a body', async () => {
