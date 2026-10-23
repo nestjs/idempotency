@@ -366,6 +366,9 @@ export class IdempotencyInterceptor
     }
 
     const { identity, payload } = adapter.describe(context);
+    if (!opts.fingerprint) {
+      this.warnIfUnreadBody(adapter, context, payload);
+    }
     const [rawScope, selected] = await Promise.all([
       scopeFn ? scopeFn(adapter.target(context), context) : undefined,
       opts.fingerprint ? opts.fingerprint(payload, context) : payload,
@@ -728,6 +731,35 @@ export class IdempotencyInterceptor
         `a request that reuses another user's key gets that user's stored response. ` +
         `Set \`scope\`, for example ${example}, or \`scope: false\` if keys are unique ` +
         `across users on purpose.`,
+    );
+  }
+
+  /**
+   * A body no parser had read yet (multipart, which `FileInterceptor()` or
+   * `req.parts()` parse inside this interceptor) isn't in the default
+   * fingerprint, so a key reused with other content is replayed instead of
+   * rejected. Warned about rather than guessed: hashing the raw bytes would
+   * reject a retry that rebuilds the form (a new boundary), and only a custom
+   * `fingerprint` knows what a retry must repeat.
+   */
+  private warnIfUnreadBody(
+    adapter: IdempotencyContextAdapter,
+    context: ExecutionContext,
+    payload: unknown,
+  ) {
+    const type = adapter.unreadBody?.(context, payload);
+    if (!type) {
+      return;
+    }
+
+    this.warnOnce(
+      context,
+      'unread-body',
+      `${handlerName(context)} received a body (${type}) that no parser had read when the ` +
+        `idempotency key was checked, so the fingerprint doesn't cover it: a key reused with ` +
+        `other content gets the stored response. Set \`fingerprint\` to read what a retry ` +
+        `must repeat from the request, for example a hash of the field values and file bytes ` +
+        `that the client sends in a header.`,
     );
   }
 

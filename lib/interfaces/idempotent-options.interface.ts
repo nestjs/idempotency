@@ -132,6 +132,12 @@ export interface IdempotentOptions {
    * (`http`), the field (`graphql`) or the pattern (`rpc`), and the scope,
    * so a key reused for another resource is still rejected. Default: the
    * whole payload.
+   *
+   * A body no parser has read when the key is checked isn't in the payload:
+   * multipart, which `FileInterceptor()` or `req.parts()` parse later, or a
+   * type no body parser handles. Without `fingerprint`, the first such call
+   * to a handler logs a warning, because a key reused with other content
+   * would get the stored response.
    */
   fingerprint?: (payload: any, context: ExecutionContext) => unknown;
   /**
