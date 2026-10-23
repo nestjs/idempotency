@@ -93,6 +93,25 @@ export class HttpContextAdapter implements IdempotencyContextAdapter {
     };
   }
 
+  unreadBody(context: ExecutionContext, payload: unknown) {
+    const { headers = {} } = context.switchToHttp().getRequest() ?? {};
+    const length = Number(headers['content-length']);
+    if (!(length > 0) && headers['transfer-encoding'] === undefined) {
+      return undefined; // no body
+    }
+
+    // `multipart/form-data; boundary=...`, in any case.
+    const type = String(headers['content-type'] ?? '').split(';')[0].trim().toLowerCase();
+    if (payload === undefined || payload === null) {
+      return type || 'no content type';
+    }
+    // `attachFieldsToBody: 'keyValues'` leaves out a file that `onFile` didn't buffer.
+    const proto = typeof payload === 'object' ? Object.getPrototypeOf(payload) : undefined;
+    const empty =
+      (proto === Object.prototype || proto === null) && Object.keys(payload as object).length === 0;
+    return empty && type.startsWith('multipart/') ? type : undefined;
+  }
+
   captureSuccess(context: ExecutionContext, value: unknown, opts: CaptureOptions): Capture {
     const res = context.switchToHttp().getResponse();
     // With `@Res()` (no passthrough), Nest leaves the response to the handler,

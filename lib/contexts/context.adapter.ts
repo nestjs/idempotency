@@ -93,6 +93,12 @@ export interface IdempotencyContextAdapter {
   /** First argument for user `scope` callbacks. */
   target(context: ExecutionContext): unknown;
   describe(context: ExecutionContext): CallDescription;
+  /**
+   * The media type of a request body that arrived but isn't in `payload`,
+   * because no parser had read it yet (multipart, which `FileInterceptor()`
+   * or `req.parts()` parse later, or a type no body parser handles).
+   */
+  unreadBody?(context: ExecutionContext, payload: unknown): string | undefined;
   /** Appended to the store key (GraphQL: the field path; RPC: the handler). */
   keySuffix?(context: ExecutionContext): string | undefined;
   captureSuccess(context: ExecutionContext, value: unknown, opts: CaptureOptions): Capture;
