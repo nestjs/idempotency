@@ -46,6 +46,22 @@ class Receipt {
   @Field() paidAt!: Date;
 }
 
+/** A computed field: GraphQL reads the getter on the prototype. */
+@ObjectType()
+class Charge {
+  @Field(() => ID) id: string;
+  constructor(
+    id: string,
+    readonly cents: number,
+  ) {
+    this.id = id;
+  }
+  @Field(() => String)
+  get amount(): string {
+    return `${(this.cents / 100).toFixed(2)} EUR`;
+  }
+}
+
 /**
  * What graphql-scalars' BigInt does: parses to a `bigint`. Built from the
  * `graphql` copy @nestjs/graphql loaded (vitest resolves the test's own
@@ -125,6 +141,12 @@ class OrdersResolver {
   @Idempotent()
   payOrder() {
     return { id: `rcpt_${hit('payOrder')}`, paidAt: new Date('2026-09-22T10:00:00.000Z') };
+  }
+
+  @Mutation(() => Charge)
+  @Idempotent()
+  charge() {
+    return new Charge(`ch_${hit('charge')}`, 1250);
   }
 
   @Mutation(() => String)
@@ -343,6 +365,16 @@ describe('Idempotency (graphql, apollo on express)', () => {
     const retry = await gql(q, 'k1');
     expect(retry.body).toEqual(first.body);
     expect(state.calls.payOrder).toBe(1);
+  });
+
+  it("replays a class instance's getter fields with the values the first call read", async () => {
+    const q = 'mutation { charge { id amount } }';
+    const first = await gql(q, 'k1');
+    expect(first.body).toEqual({ data: { charge: { id: 'ch_1', amount: '12.50 EUR' } } });
+
+    const retry = await gql(q, 'k1');
+    expect(retry.body).toEqual(first.body);
+    expect(state.calls.charge).toBe(1);
   });
 
   it('fingerprints BigInt arguments', async () => {
