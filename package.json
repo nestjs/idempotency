@@ -52,7 +52,7 @@
     "@nestjs/microservices": "12.2.0",
     "@nestjs/platform-express": "12.2.0",
     "@nestjs/platform-fastify": "12.2.0",
-    "@nestjs/resilience": "0.0.2",
+    "@nestjs/resilience": "0.0.3",
     "@nestjs/testing": "12.2.0",
     "@types/node": "24.19.2",
     "@types/pg": "8.23.1",
