@@ -54,7 +54,7 @@
     "@nestjs/platform-fastify": "12.3.2",
     "@nestjs/resilience": "0.0.3",
     "@nestjs/testing": "12.3.2",
-    "@types/node": "24.19.2",
+    "@types/node": "26.6.6",
     "@types/pg": "8.23.1",
     "@types/supertest": "7.2.1",
     "class-transformer": "0.5.1",
