@@ -131,7 +131,7 @@ export class IdempotencyInterceptor
     // Everything that can be misconfigured fails here, at startup.
     assertOptions(options);
     this.defaults = withDurationsInMs(options, 'IdempotencyModule');
-    this.header = (options.header ?? DEFAULT_HEADER).toLowerCase();
+    this.header = options.header ?? DEFAULT_HEADER;
     this.storeTimeout = Math.min(
       (this.defaults.storeTimeout as number | undefined) ?? DEFAULT_STORE_TIMEOUT,
       MAX_TIMEOUT,

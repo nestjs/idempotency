@@ -180,6 +180,34 @@ describe('IdempotencyInterceptor', () => {
       expect(store.peek('fn-7:Consumers.ship')?.state).toBe('completed');
     });
 
+    describe('reads the header option on every transport, as named or lower-cased', () => {
+      /** Like NATS `MsgHdrs`: `get()` matches the name exactly and returns '' for a missing header. */
+      const natsHeaders = (headers: Record<string, string>) => ({
+        get: (name: string) => (Object.hasOwn(headers, name) ? headers[name] : ''),
+      });
+      const transports: [string, (headers: Record<string, string>) => object][] = [
+        ['NATS', (headers) => ({ getHeaders: () => natsHeaders(headers) })],
+        ['Kafka', (headers) => ({ getMessage: () => ({ headers }) })],
+        ['RabbitMQ', (headers) => ({ getMessage: () => ({ properties: { headers } }) })],
+        ['MQTT 5', (headers) => ({ getPacket: () => ({ properties: { userProperties: headers } }) })],
+      ];
+
+      describe.each(transports)('%s', (_, context) => {
+        it.each([
+          ['default', 'Idempotency-Key'],
+          ['default', 'idempotency-key'],
+          ['X-Request-Key', 'X-Request-Key'],
+          ['X-Request-Key', 'x-request-key'],
+        ])('header option %s, sent as %s', async (header, sent) => {
+          await moduleRef.close();
+          await boot(header === 'default' ? {} : { header });
+
+          await run(message({ amount: 1 }, 'charge', context({ [sent]: 'k1' })));
+          expect(store.peek('k1:Consumers.charge')?.state).toBe('completed');
+        });
+      });
+    });
+
     it('fails the call when keyFrom names a source the context has no such thing as', async () => {
       await moduleRef.close();
       await boot({ keyFrom: { arg: 'input.key' } });

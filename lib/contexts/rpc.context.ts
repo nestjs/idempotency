@@ -34,15 +34,16 @@ function transportHeader(context: ExecutionContext, name: string): unknown {
   const rpcCtx: any = context.switchToRpc().getContext();
   const lower = name.toLowerCase();
   const candidates = [
-    // NATS: MsgHdrs
-    () => rpcCtx?.getHeaders?.()?.get?.(name),
+    // NATS: MsgHdrs, whose get() returns '' for a missing header
+    () => rpcCtx?.getHeaders?.()?.get?.(name) || rpcCtx?.getHeaders?.()?.get?.(lower),
     // Kafka: message.headers (Buffers)
     () => rpcCtx?.getMessage?.()?.headers?.[name] ?? rpcCtx?.getMessage?.()?.headers?.[lower],
     // RabbitMQ: message.properties.headers
     () => rpcCtx?.getMessage?.()?.properties?.headers?.[name] ??
       rpcCtx?.getMessage?.()?.properties?.headers?.[lower],
     // MQTT 5: packet.properties.userProperties
-    () => rpcCtx?.getPacket?.()?.properties?.userProperties?.[name],
+    () => rpcCtx?.getPacket?.()?.properties?.userProperties?.[name] ??
+      rpcCtx?.getPacket?.()?.properties?.userProperties?.[lower],
     // gRPC: second handler argument is Metadata
     () => {
       const metadata: any = context.getArgByIndex(1);

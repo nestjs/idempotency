@@ -68,7 +68,7 @@ export class HttpContextAdapter implements IdempotencyContextAdapter {
   readKey(context: ExecutionContext, source: DeclarativeKeySource, header: string) {
     const req = context.switchToHttp().getRequest();
     if (source === 'default') {
-      return req.headers[header];
+      return req.headers[header.toLowerCase()];
     }
     if ('header' in source) {
       return req.headers[source.header.toLowerCase()];
