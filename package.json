@@ -1,7 +1,18 @@
 {
   "name": "@nestjs/idempotency",
   "version": "0.0.3",
-  "description": "Nest - modern, fast, powerful node.js web framework (@idempotency)",
+  "description": "Idempotency keys for NestJS: make HTTP routes, GraphQL mutations and microservice handlers safe to retry, with one decorator.",
+  "keywords": [
+    "nestjs",
+    "nest",
+    "idempotency",
+    "idempotency-key",
+    "idempotent",
+    "retry",
+    "deduplication",
+    "payments",
+    "exactly-once"
+  ],
   "author": "Kamil Mysliwiec",
   "license": "MIT",
   "url": "https://github.com/nestjs/idempotency#readme",
