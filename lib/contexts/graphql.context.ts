@@ -71,7 +71,7 @@ export class GraphqlContextAdapter implements IdempotencyContextAdapter {
 
     if (source === 'default') {
       const arg = pick(args, DEFAULT_KEY_FIELD);
-      return arg === undefined || arg === null || arg === '' ? headers[header] : arg;
+      return arg === undefined || arg === null || arg === '' ? headers[header.toLowerCase()] : arg;
     }
     if ('header' in source) {
       return headers[source.header.toLowerCase()];
