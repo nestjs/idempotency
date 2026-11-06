@@ -1,6 +1,6 @@
 {
   "name": "@nestjs/idempotency",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "Idempotency keys for NestJS: make HTTP routes, GraphQL mutations and microservice handlers safe to retry, with one decorator.",
   "keywords": [
     "nestjs",
