@@ -10,6 +10,7 @@ import {
   Header,
   Headers,
   HttpCode,
+  HttpException,
   Module,
   RequestMethod,
   type MiddlewareConsumer,
@@ -20,6 +21,7 @@ import {
   Res,
   Sse,
   StreamableFile,
+  type HttpExceptionOptions,
   type INestApplication,
 } from '@nestjs/common';
 import { Readable } from 'node:stream';
@@ -74,6 +76,15 @@ const state = {
 };
 const hit = (name: string) => (state.calls[name] = (state.calls[name] ?? 0) + 1);
 
+/** `HttpException` options with an `errorCode`, which NestJS 11 doesn't have. */
+const withErrorCode = (
+  errorCode: string,
+): HttpExceptionOptions & { errorCode?: string } => ({ errorCode });
+/** Whether this NestJS takes an `errorCode` (12 does, 11 ignores it). */
+const errorCodeSupported =
+  (new HttpException('', 400, withErrorCode('E')) as { errorCode?: string })
+    .errorCode === 'E';
+
 @Controller('orders')
 class OrdersController {
   @Post()
@@ -99,6 +110,17 @@ class OrdersController {
   reject() {
     hit('reject');
     throw new BadRequestException('Insufficient funds');
+  }
+
+  @Post('reject-with-code')
+  @Idempotent()
+  rejectWithCode() {
+    hit('reject-with-code');
+    throw new HttpException(
+      'Insufficient funds',
+      402,
+      withErrorCode('INSUFFICIENT_FUNDS'),
+    );
   }
 
   /** The body's language comes from the request, as with `@nestjs/i18n`. */
@@ -397,6 +419,25 @@ describe.each(adapters.map((a) => a.name))('Idempotency (%s)', (adapter) => {
     expect(retry.headers['idempotent-replayed']).toBe('true');
     expect(state.calls.reject).toBe(1);
   });
+
+  it.runIf(errorCodeSupported)(
+    'replays the errorCode of an HttpException, which Nest adds to a string body',
+    async () => {
+      const first = await post('/orders/reject-with-code', 'k1');
+      expect(first.status).toBe(402);
+      expect(first.body).toEqual({
+        statusCode: 402,
+        message: 'Insufficient funds',
+        errorCode: 'INSUFFICIENT_FUNDS',
+      });
+
+      const retry = await post('/orders/reject-with-code', 'k1');
+      expect(retry.headers['idempotent-replayed']).toBe('true');
+      expect(retry.status).toBe(402);
+      expect(retry.body).toEqual(first.body);
+      expect(state.calls['reject-with-code']).toBe(1);
+    },
+  );
 
   it("stores another error's 4xx status as Nest's exception for it, and replays that", async () => {
     const first = await post('/orders/denied', 'k1');

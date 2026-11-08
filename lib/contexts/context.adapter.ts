@@ -16,6 +16,7 @@ import {
   UnprocessableEntityException,
   UnsupportedMediaTypeException,
   type ExecutionContext,
+  type HttpExceptionOptions,
 } from '@nestjs/common';
 import { STATUS_CODES } from 'node:http';
 import type { Observable } from 'rxjs';
@@ -141,7 +142,15 @@ export function captureHttpOrUnknownError(
     if (!opts.storeIf(status, error)) {
       return null;
     }
-    return { status, headers: {}, body: jsonClone(exception.getResponse()), error: 'http' };
+    const errorCode = errorCodeOf(exception);
+    return {
+      status,
+      headers: {},
+      body: jsonClone(exception.getResponse()),
+      error: 'http',
+      // Nest's filter adds it to a string body, and the app's filters may read it.
+      ...(typeof errorCode === 'string' && { errorCode }),
+    };
   }
 
   if (!opts.storeIf(500, error)) {
@@ -197,8 +206,22 @@ function clientErrorException(error: unknown): HttpException | undefined {
   return new HttpException(HttpException.createBody(null, message, code), code);
 }
 
+/**
+ * An `HttpException`'s `errorCode`. It came with NestJS 12: the types of 11
+ * have no such property, and 11 neither sets it nor takes it as an option.
+ */
+function errorCodeOf(exception: HttpException): unknown {
+  return (exception as { errorCode?: unknown }).errorCode;
+}
+
 export function rebuildHttpException(stored: IdempotencyStoredResponse): HttpException {
-  return new HttpException(stored.body as string | object, stored.status);
+  // Typed apart from the call: NestJS 11's `HttpExceptionOptions` has no `errorCode`.
+  const options: HttpExceptionOptions & { errorCode?: string } = { errorCode: stored.errorCode };
+  return new HttpException(
+    stored.body as string | object,
+    stored.status,
+    stored.errorCode === undefined ? undefined : options,
+  );
 }
 
 /** A successful GraphQL or RPC result, as a 200. */
