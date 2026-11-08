@@ -27,6 +27,10 @@ export function unreplayableReason(value: unknown): string | undefined {
   if (typeof value !== 'object' || value === null) {
     return undefined;
   }
+  // A web `Response`, whose body the router streams: as JSON, it would be `{}`.
+  if (Object.prototype.toString.call(value) === '[object Response]') {
+    return 'it returned a web Response';
+  }
   if (typeof (value as { pipe?: unknown }).pipe === 'function') {
     return 'it returned a stream';
   }

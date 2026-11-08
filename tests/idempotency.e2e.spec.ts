@@ -192,6 +192,13 @@ class OrdersController {
     return new StreamableFile(Readable.from([Buffer.from('pdf-bytes')]));
   }
 
+  @Post('web-response')
+  @Idempotent()
+  webResponse() {
+    const n = hit('web-response');
+    return new Response(`receipt-${n}`, { status: 202, headers: { 'content-type': 'text/plain' } });
+  }
+
   @Post('last')
   @Idempotent()
   last() {
@@ -654,6 +661,19 @@ describe.each(adapters.map((a) => a.name))('Idempotency (%s)', (adapter) => {
     expect(first.status).toBe(201);
     await post('/orders/file', 'k1');
     expect(state.calls.file).toBe(2);
+    expect(store.size).toBe(0);
+  });
+
+  it('does not cache a web Response, whose body is a stream, and releases the key', async () => {
+    const first = await post('/orders/web-response', 'k1');
+    expect(first.status).toBe(202);
+    expect(first.text).toBe('receipt-1');
+
+    const retry = await post('/orders/web-response', 'k1');
+    expect(retry.headers['idempotent-replayed']).toBeUndefined();
+    expect(retry.status).toBe(202);
+    expect(retry.text).toBe('receipt-2');
+    expect(state.calls['web-response']).toBe(2);
     expect(store.size).toBe(0);
   });
 });
