@@ -22,6 +22,7 @@ import {
   StreamableFile,
   type INestApplication,
 } from '@nestjs/common';
+import { createRequire } from 'node:module';
 import { Readable } from 'node:stream';
 import { from, interval, map, take } from 'rxjs';
 import request from 'supertest';
@@ -36,6 +37,14 @@ import {
 import { captureHttpOrUnknownError } from '../lib/contexts/context.adapter.js';
 import type { InMemoryEntry } from '../lib/stores/in-memory-idempotency.store.js';
 import { registered } from './register.js';
+
+const { version: nestVersion } = createRequire(import.meta.url)(
+  '@nestjs/common/package.json',
+) as { version: string };
+const [nestMajor, nestMinor] = nestVersion.split('.').map(Number);
+// NestJS answers a web Response returned from a handler from 12.4 on.
+const answersWebResponses =
+  nestMajor > 12 || (nestMajor === 12 && nestMinor >= 4);
 
 function deferred<T = void>() {
   let resolve!: (value: T) => void;
@@ -190,6 +199,13 @@ class OrdersController {
   file() {
     hit('file');
     return new StreamableFile(Readable.from([Buffer.from('pdf-bytes')]));
+  }
+
+  @Post('web-response')
+  @Idempotent()
+  webResponse() {
+    const n = hit('web-response');
+    return new Response(`receipt-${n}`, { status: 202, headers: { 'content-type': 'text/plain' } });
   }
 
   @Post('last')
@@ -654,6 +670,20 @@ describe.each(adapters.map((a) => a.name))('Idempotency (%s)', (adapter) => {
     expect(first.status).toBe(201);
     await post('/orders/file', 'k1');
     expect(state.calls.file).toBe(2);
+    expect(store.size).toBe(0);
+  });
+
+  it('does not cache a web Response, whose body is a stream, and releases the key', async ({ skip }) => {
+    skip(!answersWebResponses, 'NestJS answers a web Response from 12.4 on');
+    const first = await post('/orders/web-response', 'k1');
+    expect(first.status).toBe(202);
+    expect(first.text).toBe('receipt-1');
+
+    const retry = await post('/orders/web-response', 'k1');
+    expect(retry.headers['idempotent-replayed']).toBeUndefined();
+    expect(retry.status).toBe(202);
+    expect(retry.text).toBe('receipt-2');
+    expect(state.calls['web-response']).toBe(2);
     expect(store.size).toBe(0);
   });
 });

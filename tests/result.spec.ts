@@ -190,6 +190,7 @@ describe('unreplayableReason()', () => {
     expect(unreplayableReason(new StreamableFile(Buffer.from('x')))).toBe('it returned a StreamableFile');
     expect(unreplayableReason(Readable.from([]))).toBe('it returned a stream');
     expect(unreplayableReason(pages())).toBe('it returned an async iterable');
+    expect(unreplayableReason(new Response('x'))).toBe('it returned a web Response');
   });
 
   it('accepts plain values, including null and Buffers', () => {
