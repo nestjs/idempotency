@@ -85,6 +85,19 @@ describe('ResponseCipher', () => {
     expect(() => cipher.open('k', response)).toThrow(/not sealed/);
   });
 
+  it('rejects a record with a truncated auth tag', () => {
+    const cipher = new ResponseCipher({ keys: [SECRET] });
+    const sealed = cipher.seal('k', response) as IdempotencySealedResponse;
+    const parts = sealed.sealed.split('.');
+    parts[4] = Buffer.from(parts[4], 'base64url')
+      .subarray(0, 4)
+      .toString('base64url');
+
+    expect(() => cipher.open('k', { sealed: parts.join('.') })).toThrow(
+      /authentication failed/,
+    );
+  });
+
   it('rejects weak keys, naming the option', () => {
     expect(() => new ResponseCipher({ keys: [randomBytes(16)] })).toThrow(
       /`encryption.keys\[0\]` is a Buffer of 16 bytes; it must be 32 bytes/,

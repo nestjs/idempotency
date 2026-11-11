@@ -10,6 +10,7 @@ import { UnreadableRecordError } from '../errors/unreadable-record.error.js';
 const VERSION = 'v1';
 const ALGORITHM = 'aes-256-gcm';
 const IV_BYTES = 12; // 96-bit IV, the GCM recommendation
+const TAG_BYTES = 16;
 const HKDF_INFO = 'nestjs-idempotency:v1';
 const MIN_SECRET_LENGTH = 32;
 
@@ -109,6 +110,7 @@ export class ResponseCipher {
         ALGORITHM,
         entry.key,
         Buffer.from(iv, 'base64url'),
+        { authTagLength: TAG_BYTES },
       );
       decipher.setAAD(Buffer.from(storeKey, 'utf8'));
       decipher.setAuthTag(Buffer.from(tag, 'base64url'));
