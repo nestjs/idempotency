@@ -24,6 +24,8 @@ export interface IdempotencyStoredResponse {
    * `GraphQLError`.
    */
   error?: 'http' | 'rpc' | 'graphql';
+  /** The `errorCode` of a stored `HttpException`, given to the one rebuilt on replay. */
+  errorCode?: string;
 }
 
 /**
