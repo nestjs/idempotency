@@ -41,7 +41,17 @@ describe('encodeResult() and decodeResult()', () => {
   it('encodes a Uint8Array view by its own bytes, not the whole underlying buffer', () => {
     const backing = Buffer.from('xxHELLOxx');
     const view = new Uint8Array(backing.buffer, backing.byteOffset + 2, 5);
-    expect((throughStore(view) as Buffer).toString()).toBe('HELLO');
+    expect(Buffer.from(throughStore(view) as Uint8Array).toString()).toBe('HELLO');
+  });
+
+  it('restores a Uint8Array as a Uint8Array and a Buffer as a Buffer, which JSON writes differently', () => {
+    const value = { hash: new Uint8Array([1, 2]), buf: Buffer.from([1, 2]) };
+    const restored = throughStore(value) as typeof value;
+
+    expect(Buffer.isBuffer(restored.hash)).toBe(false);
+    expect(restored.hash).toBeInstanceOf(Uint8Array);
+    expect(Buffer.isBuffer(restored.buf)).toBe(true);
+    expect(JSON.stringify(restored)).toBe(JSON.stringify(value));
   });
 
   it('follows JSON.stringify for everything else', () => {
