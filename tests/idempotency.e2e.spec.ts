@@ -244,6 +244,13 @@ class OrdersController {
     return Buffer.from(`receipt-${hit('bytes')}`);
   }
 
+  @Post('digest')
+  @Idempotent()
+  digest() {
+    hit('digest');
+    return { sha: new Uint8Array([1, 2, 3]) };
+  }
+
   @Post('manual')
   @Idempotent()
   manual(@Res() res: any) {
@@ -674,6 +681,14 @@ describe.each(adapters.map((a) => a.name))('Idempotency (%s)', (adapter) => {
     expect(retry.headers['content-type']).toBe(first.headers['content-type']);
     expect(retry.body).toEqual(first.body);
     expect(state.calls.bytes).toBe(1);
+  });
+
+  it('replays a Uint8Array in a result as JSON writes it for the first response, not as a Buffer', async () => {
+    const first = await post('/orders/digest', 'k1');
+    const retry = await post('/orders/digest', 'k1');
+    expect(retry.headers['idempotent-replayed']).toBe('true');
+    expect(retry.body).toEqual(first.body);
+    expect(state.calls.digest).toBe(1);
   });
 
   it('never stores a response the handler wrote itself with @Res()', async () => {
