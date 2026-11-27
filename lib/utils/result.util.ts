@@ -11,11 +11,12 @@ import { UnreplayableResult } from '../errors/unreplayable-result.error.js';
  * The encoded form is JSON-safe, so any store can persist it. Values JSON
  * can't carry are tagged, as in
  * `{ "__idempotencyType": "Date", "value": "2026-09-22T10:00:00.000Z" }`:
- * Dates, BigInts, Buffers and Uint8Arrays, Maps and Sets. Everything else
- * follows `JSON.stringify`: `toJSON()` is applied, a class instance keeps
- * its own enumerable properties (not its prototype's getters and methods),
- * and `undefined`, functions and symbols are left out of objects. In strict
- * mode, a class instance also keeps the values of its prototype's getters.
+ * Dates, BigInts, Buffers and Uint8Arrays (each restored as its own kind),
+ * Maps and Sets. Everything else follows `JSON.stringify`: `toJSON()` is
+ * applied, a class instance keeps its own enumerable properties (not its
+ * prototype's getters and methods), and `undefined`, functions and symbols
+ * are left out of objects. In strict mode, a class instance also keeps the
+ * values of its prototype's getters.
  */
 const TYPE = '__idempotencyType';
 
@@ -60,8 +61,13 @@ function encode(value: unknown, strict: boolean, ancestors: Set<object>): unknow
     return { [TYPE]: 'Date', value: Number.isNaN(value.getTime()) ? null : value.toISOString() };
   }
   if (value instanceof Uint8Array) {
-    const bytes = Buffer.from(value.buffer, value.byteOffset, value.byteLength);
-    return { [TYPE]: 'Bytes', value: bytes.toString('base64') };
+    const base64 = Buffer.from(value.buffer, value.byteOffset, value.byteLength).toString('base64');
+    // A Buffer and a Uint8Array reach the platform differently (JSON: `{ type, data }` or
+    // `{ "0": ... }`), so a replay must hand back the one the handler returned.
+    if (Buffer.isBuffer(value)) {
+      return { [TYPE]: 'Bytes', value: base64 };
+    }
+    return { [TYPE]: 'Bytes', view: 'Uint8Array', value: base64 };
   }
   if (isObject(value) && typeof value.toJSON === 'function') {
     value = value.toJSON();
@@ -138,14 +144,16 @@ export function decodeResult(value: unknown): unknown {
     return value;
   }
 
-  const tagged = value as { [TYPE]?: unknown; value?: any };
+  const tagged = value as { [TYPE]?: unknown; value?: any; view?: unknown };
   switch (tagged[TYPE]) {
     case 'Date':
       return new Date(tagged.value ?? Number.NaN);
     case 'BigInt':
       return BigInt(tagged.value);
-    case 'Bytes':
-      return Buffer.from(tagged.value, 'base64');
+    case 'Bytes': {
+      const bytes = Buffer.from(tagged.value, 'base64');
+      return tagged.view === 'Uint8Array' ? new Uint8Array(bytes) : bytes;
+    }
     case 'Map':
       return new Map(tagged.value.map(([k, v]: [unknown, unknown]) => [decodeResult(k), decodeResult(v)]));
     case 'Set':
